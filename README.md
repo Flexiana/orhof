@@ -18,7 +18,7 @@ listing in the book runs against this library.
 `deps.edn` (git dependency — replace the sha):
 
 ```clojure
-io.github.jiriknesl/orhof {:git/sha "<commit-sha>"}
+io.github.Flexiana/orhof {:git/sha "<commit-sha>"}
 ```
 
 (Clojars coordinates to follow.)
@@ -84,4 +84,4 @@ fixture, so the suite is deterministic.
 ## License
 
 **MIT** — see [LICENSE](LICENSE). Copyright © 2026 Jiri Knesl.
-The companion book is a separate work under its own (Creative Commons) license.
+The companion book is a separate work, licensed CC BY-SA 4.0.
