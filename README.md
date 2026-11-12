@@ -9,9 +9,10 @@ It is the companion library to the book *Applied Higher Order Functions: A Funct
 Architecture of Optimization, Decision Making, and Validation* (Jiri Knesl). Every code
 listing in the book runs against this library.
 
-- **254 public functions** across **26 namespaces**
+- **294 public functions** across **34 namespaces**
 - **Zero dependencies** beyond Clojure 1.12
 - Three domains: optimization · Markov decision processes / RL · temporal-logic validation
+- One tree-search core (`search`, `explore`, `hylo`) under the book's tree-search algorithms
 
 ## Install
 
@@ -44,6 +45,18 @@ io.github.Flexiana/orhof {:git/sha "<commit-sha>"}
 
 ;; --- Validation: falsify a temporal-logic specification ---
 ;; see orhof.validate / orhof.val.* and docs/API.md
+
+;; --- Tree search: unfold a space and fold it in the same pass ---
+(require '[orhof.search :refer [explore search hylo breadth-first best-first unique]])
+
+(take 5 (explore breadth-first (fn [n] [(* 2 n) (inc (* 2 n))]) 1))   ; an infinite tree
+;; => (1 2 3 4 5)
+
+((hylo (fn [[x y]] (cond-> [] (< x 16) (conj [(inc x) y]) (< y 16) (conj [x (inc y)])))
+       (fn [_ counts] (if (seq counts) (reduce + counts) 1N))
+       :memo identity)                                               ; dynamic programming
+ [0 0])
+;; => 601080390N   paths across a 16x16 grid
 ```
 
 ## Namespaces
@@ -56,9 +69,12 @@ io.github.Flexiana/orhof {:git/sha "<commit-sha>"}
 | `orhof.optimize`, `orhof.opt.*` | the generic `descent` framework, Newton/quasi-Newton, Adam & friends, genetic algorithms, PSO, simulated annealing, constrained (penalty / barrier / augmented Lagrangian), linear/quadratic, surrogates, multi-objective |
 | `orhof.mdp`, `orhof.mdp.*` | value & policy iteration, Q-learning, MCTS, bandits, belief filters (Kalman/particle), games/equilibria, inference |
 | `orhof.validate`, `orhof.val.*` | temporal-logic specs (`always`, `eventually`, `until`), robustness semantics, falsification, reachability, sampling, counterfactual explanation |
+| `orhof.search` | the tree-search pattern as composable HOFs: strategies (`depth-first`, `breadth-first`, `best-first`, `unique`), `search`, `explore`, `hylo`, `hylo-eager`, `converge` |
+| `orhof.search.*` | algorithms built on it: shortest paths (`graph`), minimax, alpha-beta, expectiminimax, MCTS (`games`), forward search, branch and bound, sparse sampling, belief-space planning (`mdp`), adaptive stress testing (`val`), Lipschitz search, DIRECT, simplex, integer programming (`opt`), decision trees, forests, boosting (`learn`), backpropagation (`diff`) |
 | `orhof.examples` | cross-domain compositions that show the patterns interlocking |
 
-Full generated reference: [`docs/API.md`](docs/API.md). Design notes: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+Full generated reference: [`docs/API.md`](docs/API.md). Design notes: [`ARCHITECTURE.md`](ARCHITECTURE.md),
+[`docs/SEARCH.md`](docs/SEARCH.md).
 
 ## The idea
 
@@ -71,6 +87,10 @@ instances of a few higher-order patterns. Two examples the code makes concrete:
 - **The Bellman operator is a function transformer** `mdp -> (V -> V')`. Value iteration
   is just its fixpoint; temporal-logic operators are HOFs on specifications that return
   continuous robustness values.
+- **Tree search is one unfold and one fold.** Dijkstra, alpha-beta, branch and bound,
+  DIRECT, MCTS, ID3 and backpropagation differ in what they plug in: a *successor
+  function*, a *fold*, and for the top-down ones a *strategy* that orders the frontier.
+  The space is never built.
 
 ## Testing
 
@@ -78,7 +98,7 @@ instances of a few higher-order patterns. Two examples the code makes concrete:
 clojure -X:test
 ```
 
-187 tests. Stochastic algorithms (GA, bandits, PSO, sampling, …) are seeded via a shared
+236 tests. Stochastic algorithms (GA, bandits, PSO, sampling, …) are seeded via a shared
 fixture, so the suite is deterministic.
 
 ## License

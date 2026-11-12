@@ -14,7 +14,9 @@
     orhof.mdp.beliefs orhof.mdp.games orhof.mdp.inference
     orhof.mdp.learning orhof.mdp.approx
     orhof.val.spec orhof.val.falsify orhof.val.sampling
-    orhof.val.reach orhof.val.explain])
+    orhof.val.reach orhof.val.explain
+    orhof.search orhof.search.graph orhof.search.games orhof.search.mdp
+    orhof.search.val orhof.search.opt orhof.search.learn orhof.search.diff])
 
 (doseq [ns-sym namespaces]
   (require ns-sym))
