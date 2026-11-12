@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: DeLaGuardo/setup-clojure@13.7.0
+        with:
+          cli: latest
+      - name: Test
+        run: clojure -X:test
+      - name: Build the jar
+        run: clojure -T:build jar
+      - name: Check the deploy step by installing into the local Maven repository
+        run: clojure -X:deploy :installer :local $(clojure -T:build paths)
