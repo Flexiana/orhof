@@ -19,13 +19,14 @@ listing in the book runs against this library.
 From Clojars:
 
 ```clojure
-io.github.flexiana/orhof {:mvn/version "1.0.0"}
+com.flexiana/orhof {:mvn/version "1.0.0"}
 ```
 
 Or as a git dependency:
 
 ```clojure
-io.github.Flexiana/orhof {:git/tag "v1.0.0" :git/sha "<sha of the tag>"}
+com.flexiana/orhof {:git/url "https://github.com/Flexiana/orhof"
+                    :git/tag "v1.0.0" :git/sha "<sha of the tag>"}
 ```
 
 ## Quick start
@@ -108,7 +109,7 @@ fixture, so the suite is deterministic.
 ## Releasing
 
 Push a tag `vX.Y.Z`. The Release workflow runs the tests and deploys `X.Y.Z` to Clojars
-as `io.github.flexiana/orhof`. It needs the repository secrets `CLOJARS_USERNAME` and
+as `com.flexiana/orhof`. It needs the repository secrets `CLOJARS_USERNAME` and
 `CLOJARS_PASSWORD` (a Clojars deploy token). Locally: `clojure -T:build jar` or `install`.
 
 ## License

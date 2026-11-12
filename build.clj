@@ -9,7 +9,7 @@
    with the :deploy alias, which `clojure -T:build paths` prints arguments for."
   (:require [clojure.tools.build.api :as b]))
 
-(def lib 'io.github.flexiana/orhof)
+(def lib 'com.flexiana/orhof)
 (def version (or (System/getenv "ORHOF_VERSION") "1.0.0-SNAPSHOT"))
 (def class-dir "target/classes")
 (def jar-file (format "target/%s-%s.jar" (name lib) version))
