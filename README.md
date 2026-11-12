@@ -11,23 +11,40 @@ listing in the book runs against this library.
 
 - **294 public functions** across **34 namespaces**
 - **Zero dependencies** beyond Clojure 1.12
+- On Clojars: `com.flexiana/orhof {:mvn/version "1.0.0"}`
 - Three domains: optimization · Markov decision processes / RL · temporal-logic validation
 - One tree-search core (`search`, `explore`, `hylo`) under the book's tree-search algorithms
 
 ## Install
 
-From Clojars:
+[![Clojars Project](https://img.shields.io/clojars/v/com.flexiana/orhof.svg)](https://clojars.org/com.flexiana/orhof)
+
+Clojure CLI, `deps.edn`:
 
 ```clojure
 com.flexiana/orhof {:mvn/version "1.0.0"}
 ```
 
-Or as a git dependency:
+Leiningen, `project.clj`:
+
+```clojure
+[com.flexiana/orhof "1.0.0"]
+```
+
+Git dependency:
 
 ```clojure
 com.flexiana/orhof {:git/url "https://github.com/Flexiana/orhof"
-                    :git/tag "v1.0.0" :git/sha "<sha of the tag>"}
+                    :git/tag "v1.0.0" :git/sha "f22436d"}
 ```
+
+Try it in a REPL without a project:
+
+```bash
+clj -Sdeps '{:deps {com.flexiana/orhof {:mvn/version "1.0.0"}}}'
+```
+
+Needs Clojure 1.12 or later and nothing else.
 
 ## Quick start
 
