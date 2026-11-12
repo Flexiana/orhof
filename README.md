@@ -16,13 +16,17 @@ listing in the book runs against this library.
 
 ## Install
 
-`deps.edn` (git dependency — replace the sha):
+From Clojars:
 
 ```clojure
-io.github.Flexiana/orhof {:git/sha "<commit-sha>"}
+io.github.flexiana/orhof {:mvn/version "1.0.0"}
 ```
 
-(Clojars coordinates to follow.)
+Or as a git dependency:
+
+```clojure
+io.github.Flexiana/orhof {:git/tag "v1.0.0" :git/sha "<sha of the tag>"}
+```
 
 ## Quick start
 
@@ -100,6 +104,12 @@ clojure -X:test
 
 236 tests. Stochastic algorithms (GA, bandits, PSO, sampling, …) are seeded via a shared
 fixture, so the suite is deterministic.
+
+## Releasing
+
+Push a tag `vX.Y.Z`. The Release workflow runs the tests and deploys `X.Y.Z` to Clojars
+as `io.github.flexiana/orhof`. It needs the repository secrets `CLOJARS_USERNAME` and
+`CLOJARS_PASSWORD` (a Clojars deploy token). Locally: `clojure -T:build jar`.
 
 ## License
 
