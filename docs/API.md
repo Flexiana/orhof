@@ -4,8 +4,8 @@ Auto-generated documentation for all public functions.
 Each entry shows the function signature, type information, and usage examples.
 
 **Library stats:**
-- 26 namespaces
-- 254 public functions
+- 34 namespaces
+- 294 public functions
 
 ---
 
@@ -37,6 +37,14 @@ Each entry shows the function signature, type information, and usage examples.
 - [`orhof.val.sampling`](#orhofvalsampling) (8 functions)
 - [`orhof.val.reach`](#orhofvalreach) (10 functions)
 - [`orhof.val.explain`](#orhofvalexplain) (8 functions)
+- [`orhof.search`](#orhofsearch) (11 functions)
+- [`orhof.search.graph`](#orhofsearchgraph) (2 functions)
+- [`orhof.search.games`](#orhofsearchgames) (5 functions)
+- [`orhof.search.mdp`](#orhofsearchmdp) (5 functions)
+- [`orhof.search.val`](#orhofsearchval) (2 functions)
+- [`orhof.search.opt`](#orhofsearchopt) (5 functions)
+- [`orhof.search.learn`](#orhofsearchlearn) (8 functions)
+- [`orhof.search.diff`](#orhofsearchdiff) (2 functions)
 
 ---
 
@@ -4143,6 +4151,1037 @@ Compute sensitivity of robustness to each disturbance dimension.
 Approximate Shapley values for failure attribution.
    Catalog: V55. Pattern: SENSITIVITY ANALYZER + MAP-OVER + REDUCE.
    Estimates how much each disturbance dimension contributes to failure.
+
+---
+
+
+## `orhof.search`
+
+Pattern 7, the Tree/Graph Explorer, as composable higher-order functions:
+   unfold a search space and fold it in the same pass. The space is never built.
+
+     search      top-down: a reducing function folds the nodes in strategy
+                 order, and what it has folded so far steers the unfold
+                 (pruning, bounds, early exit)
+     explore     the unfold alone: the nodes as a reducible, seqable collection
+     hylo        bottom-up: the value of a node is a fold of its children's values
+     hylo-eager  the same on an explicit stack, for trees too deep for the JVM stack
+     converge    the one-child case: the stopping rule `iterate` lacks
+
+   A strategy decides which pending node comes next. Like a reducing function
+   it is one function with three arities, and its frontier is plain data:
+
+     (strategy)                 -> an empty frontier
+     (strategy frontier)        -> [node frontier'], or nil when nothing is pending
+     (strategy frontier nodes)  -> the frontier with the sibling `nodes` added
+
+   depth-first and breadth-first are strategies, (best-first priority) returns
+   one, unique-by and unique wrap one for graphs. Everything composes with
+   what Clojure already has: successor functions with mapcat, strategy
+   transformers with comp, the fold with transducers, hylo with comp and juxt.
+
+   This namespace needs nothing but clojure.core.
+
+### `best-first`
+
+```clojure
+(best-first priority)
+```
+
+Returns a strategy that takes the node with the lowest (priority node)
+   first; ties leave in insertion order. Priorities are compared with
+   `compare`, so numbers and vectors of numbers both work.
+
+   (Node -> Priority) -> Strategy
+
+   The frontier is a sorted map from priority to a queue of nodes.
+
+   Example:
+     (into [] (explore (best-first count) {} "ccc" "a" "bb")) ;=> ["a" "bb" "ccc"]
+
+---
+
+### `breadth-first`
+
+```clojure
+(breadth-first )
+(breadth-first queue)
+(breadth-first queue nodes)
+```
+
+Strategy: the oldest nodes first, level by level. The frontier is a
+   PersistentQueue.
+
+   Example:
+     (into [] (explore breadth-first {:a [:b :c] :b [:d]} :a)) ;=> [:a :b :c :d]
+
+---
+
+### `by-identity`
+
+```clojure
+(by-identity )
+```
+
+Returns a key function for unique-by and for the :memo option of hylo and
+   hylo-eager that tells nodes apart by identity instead of value: the same
+   object always gets the same key, equal but distinct objects get different
+   keys. Each key is a small number, so a lookup costs the same however large
+   the node is.
+
+   () -> (Node -> Int)
+
+   Use it when nodes are big immutable structures that share sub-structure,
+   such as expression graphs. The function remembers every node it has seen;
+   let it go with the search it was made for.
+
+   Example:
+     (let [id (by-identity), e [:+ :x :y]]
+       [(= (id e) (id e)) (= (id e) (id [:+ :x :y]))]) ;=> [true false]
+
+---
+
+### `converge`
+
+```clojure
+(converge close? xs)
+```
+
+The first x in xs for which (close? previous x) holds; the last x if xs
+   ends first; nil if xs is empty. The stopping rule `iterate` lacks.
+
+   (a -> a -> Bool) -> [a] -> a
+
+   Example:
+     (converge = (iterate #(Math/floor (/ % 2)) 100.0)) ;=> 0.0
+     (converge #(< (abs (- %1 %2)) 1e-12) (iterate #(* 0.5 (+ % (/ 2.0 %))) 1.0)) ;=> 1.414213562373095
+
+---
+
+### `depth-first`
+
+```clojure
+(depth-first )
+(depth-first frames)
+(depth-first frames nodes)
+```
+
+Strategy: the newest siblings first. Pre-order, like tree-seq.
+
+   The frontier is a list of sibling seqs, so siblings keep their order and a
+   lazy successor seq is only realised as far as the search backtracks into it.
+
+   Example:
+     (into [] (explore depth-first {:a [:b :c] :b [:d]} :a)) ;=> [:a :b :d :c]
+
+---
+
+### `explore`
+
+```clojure
+(explore strategy expand & roots)
+```
+
+The nodes reachable from `roots`, in strategy order, as a collection that
+   is both reducible and seqable. Nothing is expanded until it is consumed, so
+   the space may be infinite.
+
+   Strategy -> (Node -> [Node]) -> Node... -> Reducible Node
+
+   (expand node) -> the child nodes; nil or empty prunes.
+
+   It is clojure.core/iteration whose continuation token is the frontier, so
+   it works with reduce, transduce, into, sequence, eduction and the seq
+   functions.
+
+   Example:
+     (take 5 (explore breadth-first (fn [n] [(* 2 n) (inc (* 2 n))]) 1)) ;=> (1 2 3 4 5)
+
+---
+
+### `hylo`
+
+```clojure
+(hylo expand fold & {:keys [memo]})
+```
+
+Returns the function node -> value defined by an unfold and a fold
+   (a hylomorphism):
+
+     (expand node)             -> the child nodes
+     (fold node child-values)  -> the value of the node
+
+   (Node -> [Node]) -> (Node -> [Value] -> Value) -> (Node -> Value)
+
+   child-values is lazy: a child whose value `fold` never reads is never
+   expanded, which is how alpha-beta and branch and bound prune.
+
+   Options:
+     :memo key-fn   remember the value of every (key-fn node), like memoize.
+                    Equal keys are solved once: dynamic programming on a
+                    graph without cycles. Keep keys small, or use (by-identity).
+
+   The recursion uses the JVM stack: about 1,500 levels on the default 1 MB
+   thread stack. For deeper spaces use hylo-eager.
+
+   Example:
+     ;; paths from corner to corner of a 16x16 grid
+     ((hylo (fn [[x y]] (cond-> [] (< x 16) (conj [(inc x) y]) (< y 16) (conj [x (inc y)])))
+            (fn [_ counts] (if (seq counts) (reduce + counts) 1N))
+            :memo identity)
+      [0 0])
+     ;=> 601080390N
+
+---
+
+### `hylo-eager`
+
+```clojure
+(hylo-eager expand fold & {:keys [memo]})
+```
+
+Like hylo, on an explicit stack: depth is limited by memory, not by the JVM
+   stack. The price is that every child is evaluated before its parent, so
+   `fold` gets all the child values (a vector) and cannot prune by not
+   reading them.
+
+   (Node -> [Node]) -> (Node -> [Value] -> Value) -> (Node -> Value)
+
+   Whenever `fold` reads every child value, hylo and hylo-eager return the
+   same result. Options:
+     :memo key-fn   as in hylo. With :memo a cycle in the space throws
+                    instead of looping forever.
+
+   Example:
+     ;; the length of a chain a million nodes long
+     ((hylo-eager (fn [n] (when (pos? n) [(dec n)]))
+                  (fn [_ lengths] (if (seq lengths) (inc (first lengths)) 0)))
+      1000000)
+     ;=> 1000000
+
+---
+
+### `search`
+
+```clojure
+(search strategy rf init expand & roots)
+```
+
+Folds the space reachable from `roots` while unfolding it.
+
+   Strategy -> (Acc -> Node -> Acc) -> Acc -> (Acc -> Node -> [Node]) -> Node... -> Acc
+
+   (rf acc node)     -> the new acc, or (reduced acc) to stop the search
+   (expand acc node) -> the child nodes. It sees what the fold knows so far,
+                        so it can prune: nil cuts the branch below `node`.
+
+   Runs in a loop, so depth is limited by memory, not by the stack.
+
+   Example:
+     ;; branch and bound: the largest sum of a subset of xs that is <= 10
+     (let [xs [7 5 4 3]]
+       (search depth-first
+               (fn [best [_ sum]] (max best sum))
+               0
+               (fn [best [i sum]]                       ; prune what cannot beat `best`
+                 (when (and (< i (count xs)) (> (reduce + sum (subvec xs i)) best))
+                   (cond-> [[(inc i) sum]]
+                     (<= (+ sum (xs i)) 10) (conj [(inc i) (+ sum (xs i))]))))
+               [0 0]))
+     ;=> 10
+
+---
+
+### `unique`
+
+```clojure
+(unique strategy)
+```
+
+Strategy transformer: each node is taken at most once. (unique-by identity strategy).
+
+   Strategy -> Strategy
+
+   Example:
+     (into [] (explore (unique depth-first) {:a [:b] :b [:a]} :a)) ;=> [:a :b]
+
+---
+
+### `unique-by`
+
+```clojure
+(unique-by key strategy)
+```
+
+Strategy transformer for graphs: each (key node) is taken at most once,
+   so a search over a graph with cycles terminates.
+
+   (Node -> Key) -> Strategy -> Strategy
+
+   The frontier becomes [seen inner-frontier]. Keys are compared by value, so
+   keep them small (ids, coordinates): a lookup that lands on another key
+   walks both keys, which is slow for deep nested data. For nodes that are
+   large immutable structures use (by-identity).
+
+   Example:
+     (def graph {:a [:b :c] :b [:d] :c [:d] :d [:a]})
+     (into [] (explore (unique-by identity breadth-first) graph :a)) ;=> [:a :b :c :d]
+
+---
+
+
+## `orhof.search.graph`
+
+Graph search on orhof.search: shortest paths and reachability.
+   Pattern: TREE/GRAPH EXPLORER — explore with a strategy; unique-by makes
+   the tree a graph.
+
+### `reachable`
+
+```clojure
+(reachable successors & roots)
+```
+
+The set of nodes that can be reached from `roots`.
+   Catalog: V48. Pattern: TREE/GRAPH EXPLORER (explore + breadth-first + unique).
+
+   (Node -> [Node]) -> Node... -> #{Node}
+
+   Example:
+     (reachable {:a [:b] :b [:a :c] :d [:a]} :a) ;=> #{:a :b :c}
+
+---
+
+### `shortest-path`
+
+```clojure
+(shortest-path neighbors start goal? & {:keys [heuristic key], :or {heuristic (constantly 0), key identity}})
+```
+
+Cheapest path from `start` to a node satisfying `goal?`: Dijkstra's
+   algorithm, or A* when given a heuristic.
+   Catalog: D37. Pattern: TREE/GRAPH EXPLORER (explore + best-first + unique-by).
+
+   (Node -> {Node Cost}) -> Node -> (Node -> Bool) -> {:node Node, :cost R, :path [Node]}
+
+   neighbors: node -> {node' cost} or [[node' cost] ...], costs >= 0
+   Options:
+     :heuristic  node -> an estimate of the remaining cost that never
+                 overestimates and is consistent (default: 0, Dijkstra)
+     :key        node -> what makes two nodes the same state (default: identity)
+
+   Returns nil when no goal can be reached. The graph may be infinite.
+
+   Example:
+     (shortest-path {:a {:b 7 :c 9} :b {:d 15} :c {:d 11} :d {}} :a #{:d})
+     ;=> {:node :d :cost 20 :path [:a :c :d]}
+
+---
+
+
+## `orhof.search.games`
+
+Game-tree search on orhof.search: minimax, alpha-beta, expectiminimax and
+   Monte Carlo tree search.
+   Pattern: TREE/GRAPH EXPLORER — the minimax family is hylo; MCTS is iterate
+   over two explore walks and a reduce.
+
+   A game is a map of functions, its rules:
+     :game-over?   state -> boolean
+     :legal-moves  state -> [move]
+     :apply-move   state, move -> state
+     :evaluate     state -> score for the maximising player    (minimax family)
+     :kind         state -> :max, :min or :chance              (expectiminimax)
+     :outcomes     state -> {state' probability}               (expectiminimax)
+     :to-move      state -> player                             (mcts; default: one player)
+     :reward       final state, player -> number               (mcts)
+
+### `alpha-beta`
+
+```clojure
+(alpha-beta rules state depth alpha beta maximizing?)
+```
+
+Minimax value of `state` with alpha-beta pruning: the same value as
+   minimax from a fraction of the nodes.
+   Pattern: TREE/GRAPH EXPLORER (hylo). The value of a node is a function of
+   the window, so a child is searched only when its parent calls it, with the
+   window narrowed so far; `reduced` is the cutoff.
+
+   Rules -> State -> Int -> R -> R -> Bool -> R
+
+   Example:
+     (alpha-beta nim [4 1] 10 -1 1 true) ;=> 1     ; nim as under minimax
+
+---
+
+### `expectiminimax`
+
+```clojure
+(expectiminimax rules state depth)
+```
+
+Minimax with chance nodes: the value of a chance node is the expectation
+   over its outcomes.
+   Pattern: TREE/GRAPH EXPLORER (hylo). The fold is max, min or a weighted sum.
+
+   Rules -> State -> Int -> R
+
+   The rules also give (:kind state) -> :max, :min or :chance and, at a chance
+   node, (:outcomes state) -> {state' probability}.
+
+   Example:
+     ;; a coin flip between a sure 1 and a choice of 4 or 0
+     (def flip {:kind :chance
+                :outcomes {{:value 1} 0.5
+                           {:kind :max :moves [{:value 4} {:value 0}]} 0.5}})
+     (expectiminimax {:game-over? :value :evaluate :value :kind :kind :outcomes :outcomes
+                      :legal-moves :moves :apply-move (fn [_ child] child)}
+                     flip 5)
+     ;=> 2.5
+
+---
+
+### `mcts`
+
+```clojure
+(mcts rules state & {:keys [budget c-explore evaluate prior]})
+```
+
+Monte Carlo tree search: run `budget` simulations from `state` and play
+   the most visited move.
+   Catalog: D36. Pattern: TREE/GRAPH EXPLORER + GENERATE.
+
+   Rules -> State -> {:keys [budget c-explore evaluate prior]}
+   -> {:move Move, :visits Int, :value R}
+
+   The rules need :legal-moves, :apply-move, :game-over? and :reward, plus
+   :to-move when there is more than one player. :value is the mean reward of
+   the chosen move for the player to move. Returns nil if the game is over.
+
+   Options:
+     :budget     number of simulations (default 1000)
+     :c-explore  exploration constant (default sqrt 2)
+     :evaluate   (fn [state player] -> reward) used instead of random playouts
+     :prior      (fn [state] -> (fn [move] -> probability)); switches the
+                 selection rule from UCB1 to PUCT, as in AlphaZero
+
+   Example:
+     ;; nim as under minimax, plus who moves and who won
+     (def nim' (assoc nim
+                      :to-move (fn [[_ player]] player)
+                      :reward  (fn [[_ player] p] (if (= p (- player)) 1.0 0.0))))
+     (:move (mcts nim' [4 1] :budget 500)) ;=> 1
+
+---
+
+### `mcts-statistics`
+
+```clojure
+(mcts-statistics rules state & {:keys [budget c-explore evaluate prior]})
+```
+
+The statistics of Monte Carlo tree search after `budget` simulations from
+   `state`: {state {:n visits, :w total reward}}, the reward being that of
+   the player who moved into the state.
+   Catalog: D36. Pattern: TREE/GRAPH EXPLORER (iterate over one simulation).
+
+   Rules -> State -> {:keys [budget c-explore evaluate prior]} -> {State {:n Int, :w R}}
+
+   Options as for mcts.
+
+   Example:
+     (:n ((mcts-statistics nim' [4 1] :budget 200) [4 1])) ;=> 200     ; nim' as under mcts
+
+---
+
+### `minimax`
+
+```clojure
+(minimax rules state depth maximizing?)
+```
+
+Minimax value of `state`, searching `depth` plies.
+   Pattern: TREE/GRAPH EXPLORER (hylo). The fold is max or min.
+
+   Rules -> State -> Int -> Bool -> R
+
+   Example:
+     ;; nim: take 1 or 2 sticks; whoever takes the last one wins.
+     ;; A state is [sticks player-to-move], the players are 1 and -1.
+     (def nim {:game-over?  (fn [[sticks _]] (zero? sticks))
+               :legal-moves (fn [[sticks _]] (filter #(<= % sticks) [1 2]))
+               :apply-move  (fn [[sticks player] n] [(- sticks n) (- player)])
+               :evaluate    (fn [[_ player]] (- player))})     ; the one who just moved won
+     (minimax nim [4 1] 10 true) ;=> 1
+     (minimax nim [3 1] 10 true) ;=> -1
+
+---
+
+
+## `orhof.search.mdp`
+
+Online planning on orhof.search: forward search, branch and bound, sparse
+   sampling, and planning in belief space for POMDPs.
+   Pattern: TREE/GRAPH EXPLORER — each is a fold of the lookahead tree, in
+   which decision nodes (pick an action) alternate with chance nodes (nature
+   picks an outcome). Forward search and sparse sampling read every child, so
+   they run on hylo-eager and no depth is too deep; branch and bound skips
+   children, so it runs on hylo.
+
+   MDPs are the maps of orhof.mdp.planning/make-mdp. Each function returns
+   {:action a, :value v}: the best action at the state and its value.
+
+### `belief-mdp`
+
+```clojure
+(belief-mdp pomdp)
+```
+
+The MDP whose states are the beliefs of a POMDP, so that every MDP
+   algorithm plans under partial observability unchanged. A belief is a map
+   {state probability}.
+   Catalog: D71 (the same problem alpha vectors solve). Pattern: TRANSFORM-PROBLEM.
+
+   POMDP -> MDP
+
+   The POMDP is a map:
+     :actions      state -> [action]            (the same for every state of a belief)
+     :transition   state, action -> {state' probability}
+     :observation  action, state' -> {observation probability}
+     :reward       state, action -> reward
+     :gamma        discount factor
+
+   A step of the belief MDP is one Bayes update per possible observation.
+
+   Example:
+     ;; tiger: a tiger behind one of two doors; listening is right 85% of the time
+     (:action (forward-search (belief-mdp tiger) {:left 0.5 :right 0.5} :depth 4))  ;=> :listen
+     (:action (forward-search (belief-mdp tiger) {:left 0.99 :right 0.01} :depth 4)) ;=> :open-right
+
+---
+
+### `branch-and-bound`
+
+```clojure
+(branch-and-bound mdp state lower upper & {:keys [depth]})
+```
+
+Forward search that tries the actions of a state in order of their upper
+   bound and stops at the first one that cannot beat the best found so far.
+   The same answer as forward-search with :leaf lower, from fewer evaluations.
+   Pattern: TREE/GRAPH EXPLORER (hylo; the unread children are never expanded).
+
+   MDP -> State -> (State -> R) -> (State -> Action -> R) -> {:keys [depth]}
+   -> {:action Action, :value R}
+
+   (lower s)    <= the value of s; used at the horizon
+   (upper s a)  >= the value of taking a in s
+
+   Example:
+     ;; mdp as under forward-search: no state is worth less than -10 or more than 0
+     (branch-and-bound mdp [0 0] (fn [s] (if (= s [3 3]) 0.0 -10.0)) (constantly 0.0) :depth 6)
+     ;=> {:action :down :value -4.68559}
+
+---
+
+### `forward-search`
+
+```clojure
+(forward-search mdp state & {:keys [depth leaf]})
+```
+
+Exhaustive lookahead to a fixed depth, solving equal states at equal depth once.
+   Catalog: D33. Pattern: TREE/GRAPH EXPLORER (hylo-eager with :memo).
+
+   MDP -> State -> {:keys [depth leaf]} -> {:action Action, :value R}
+
+   Options:
+     :depth  number of steps to look ahead (default 3)
+     :leaf   state -> estimate of its value, used at the horizon (default 0).
+             With the converged values of value iteration the result is exact
+             at any depth.
+
+   A state without actions is a leaf.
+
+   Example:
+     ;; mdp: a 4x4 grid, -1 a step until the corner [3 3], gamma 0.9
+     (forward-search mdp [0 0] :depth 4)
+     ;=> {:action :right :value -3.439}
+
+---
+
+### `reachable-states`
+
+```clojure
+(reachable-states mdp state)
+```
+
+Every state the MDP can reach from `state`: the :states that planning from
+   there needs.
+   Pattern: TREE/GRAPH EXPLORER (explore + unique).
+
+   MDP -> State -> #{State}
+
+   Example:
+     (plan/value-iteration (assoc mdp :states (reachable-states mdp start)))
+
+---
+
+### `sparse-sampling`
+
+```clojure
+(sparse-sampling mdp state & {:keys [depth n-samples leaf]})
+```
+
+Forward search on a fixed number of sampled outcomes per action instead of
+   all of them, so the cost does not depend on the number of states.
+   Catalog: D35. Pattern: TREE/GRAPH EXPLORER + GENERATE (hylo-eager over a sampled tree).
+
+   MDP -> State -> {:keys [depth n-samples leaf]} -> {:action Action, :value R}
+
+   Options:
+     :depth      number of steps to look ahead (default 3)
+     :n-samples  sampled outcomes per action (default 10)
+     :leaf       state -> estimate of its value at the horizon (default 0)
+
+   Example:
+     (sparse-sampling mdp [0 0] :depth 2 :n-samples 20)     ; mdp as under forward-search
+     ;=> {:action :right :value -1.9}
+
+---
+
+
+## `orhof.search.val`
+
+Falsification by tree search on orhof.search: the most likely way for a
+   system to fail under a finite set of disturbances.
+   Pattern: TREE/GRAPH EXPLORER — adaptive stress testing is Monte Carlo tree
+   search over disturbance sequences; the exact answer is a shortest path.
+
+   Systems are the maps of orhof.val.spec/make-system. The disturbance model
+   is a map {disturbance probability}. A margin is a function
+   state -> robustness; a negative margin is a violation.
+
+   Both functions return
+     {:falsified? Bool, :disturbances [d], :trajectory [state],
+      :robustness R, :log-likelihood R}
+   where :robustness is the lowest margin on the trajectory.
+
+### `adaptive-stress-test`
+
+```clojure
+(adaptive-stress-test system disturbances margin horizon & {:keys [budget c-explore miss-penalty]})
+```
+
+Adaptive stress testing: searches for the most likely disturbance sequence
+   that drives the system to a violation within `horizon` steps. Monte Carlo
+   tree search picks each disturbance in turn.
+   Catalog: V17-V20. Pattern: TREE/GRAPH EXPLORER (mcts inside iterate).
+
+   System -> {Disturbance Prob} -> (State -> R) -> Int
+   -> {:keys [budget c-explore miss-penalty]}
+   -> {:falsified? Bool, :disturbances [d], :trajectory [State], :robustness R, :log-likelihood R}
+
+   The reward of a trajectory is its log-likelihood; one that does not fail
+   pays (miss-penalty robustness) on top, so near misses rank above safe runs.
+
+   Options:
+     :budget        simulations per step (default 800)
+     :c-explore     exploration constant; keep it on the scale of the miss
+                    penalty (default 40.0)
+     :miss-penalty  robustness -> penalty (default 50 + 10 * robustness)
+
+   The search is stochastic: it finds a failure, not always the most likely
+   one. most-likely-failure gives the exact answer when it is affordable.
+
+   Example:
+     ;; a heater that switches on below 20 degrees; fail outside [18, 25]
+     (def heater (orhof.val.spec/make-system
+                  (fn [temp d] (+ temp (if (< temp 20.0) 2.0 0.0) d (* -0.05 (- temp 20.0))))
+                  20.0))
+     (def weather {-1.0 0.05, 0.0 0.9, 1.0 0.05})         ; cold snap, calm, heat wave
+     (defn margin [temp] (min (- temp 18.0) (- 25.0 temp)))
+     (:falsified? (adaptive-stress-test heater weather margin 8)) ;=> true
+
+---
+
+### `most-likely-failure`
+
+```clojure
+(most-likely-failure system disturbances margin horizon)
+```
+
+The most likely disturbance sequence that drives the system to a violation
+   within `horizon` steps, exactly: a shortest path over disturbance
+   sequences in which a step costs -log p. States reached by different
+   sequences of the same length are searched once.
+   Catalog: V17-V20 (the exact counterpart). Pattern: TREE/GRAPH EXPLORER
+   (explore + best-first + unique-by).
+
+   System -> {Disturbance Prob} -> (State -> R) -> Int
+   -> {:falsified? Bool, :disturbances [d], :trajectory [State], :robustness R, :log-likelihood R}
+
+   Returns {:falsified? false} when no sequence fails.
+
+   Example:
+     ;; heater, weather and margin as under adaptive-stress-test
+     (:disturbances (most-likely-failure heater weather margin 8))
+     ;=> [-1.0 1.0 1.0 1.0 1.0 1.0]     ; a cold snap switches the heater on, five heat waves do the rest
+
+---
+
+
+## `orhof.search.opt`
+
+Global and discrete optimization on orhof.search: Lipschitz branch and
+   bound, DIRECT, the simplex method and integer programming.
+   Pattern: TREE/GRAPH EXPLORER — each divides a region and keeps the best
+   point found; `search` folds the pieces while a strategy picks the next one
+   to divide. The simplex method is the one-child case: iterate + converge.
+
+   Everything minimizes, like the rest of orhof.
+
+### `direct`
+
+```clojure
+(direct f bounds & {:keys [eps max-evals], :or {eps 1.0E-4, max-evals 500}})
+```
+
+DIRECT: global minimum of f over a box, without derivatives and without a
+   Lipschitz constant. It divides the rectangles that could contain the
+   minimum for some rate of change of f (Jones, Perttunen and Stuckman, 1993).
+   Catalog: O37. Pattern: TREE/GRAPH EXPLORER (search + its own strategy).
+
+   ([R] -> R) -> [[R] [R]] -> {:keys [eps max-evals]} -> {:x [R], :value R, :evals Int}
+
+   bounds: [lower-bounds upper-bounds]
+   Options:
+     :max-evals  budget of function evaluations; the search finishes the
+                 division in progress, so it may overshoot by a few (default 500)
+     :eps        how much better than the best value a rectangle must promise
+                 to be, relative to that value (default 1e-4)
+
+   Example:
+     (direct (fn [[x y]] (+ (* x x) (* y y))) [[-3.0 -2.0] [5.0 4.0]] :max-evals 200)
+     ;=> {:x [~0.001 ~0.001] :value ~4e-6 :evals 201}
+
+---
+
+### `integer-program`
+
+```clojure
+(integer-program c A b)
+```
+
+Minimizes c . x subject to A x <= b, x >= 0 and x integer, by branch and
+   bound: the bound of a node is its linear relaxation, and a fractional x_j
+   splits it into x_j <= floor and x_j >= floor + 1.
+   Catalog: O72. Pattern: TREE/GRAPH EXPLORER (search + best-first).
+
+   [Int] -> [[Int]] -> [Int] -> {:status :optimal, :x [Int], :value Int}
+                              | {:status :infeasible} | {:status :unbounded}
+
+   Give integers or ratios, not doubles: the test for an integral x is exact.
+   The feasible region must be bounded.
+
+   Example:
+     ;; a knapsack: maximize 5x + 4y  subject to  6x + 4y <= 24, x + 2y <= 6
+     (integer-program [-5 -4] [[6 4] [1 2]] [24 6])
+     ;=> {:status :optimal :x [4 0] :value -20}
+
+---
+
+### `linear-program`
+
+```clojure
+(linear-program c A b)
+```
+
+Minimizes c . x subject to A x <= b, x >= 0, by the two-phase tableau
+   simplex method with Bland's rule.
+   Catalog: O54. Pattern: ITERATE (converge over iterate: a vertex is a fixed
+   point of the pivot step when it is optimal).
+
+   [R] -> [[R]] -> [R] -> {:status :optimal, :x [R], :value R}
+                        | {:status :infeasible} | {:status :unbounded}
+
+   b may be negative, so `>=` rows (negate them) and `=` rows (a pair) can be
+   stated. On integers and ratios the arithmetic is exact: the result is a
+   vertex, not an approximation of one. Meant for small problems.
+
+   Example:
+     ;; minimize -3x - 5y  subject to  x <= 4, 2y <= 12, 3x + 2y <= 18
+     (linear-program [-3 -5] [[1 0] [0 2] [3 2]] [4 12 18])
+     ;=> {:status :optimal :x [2 6] :value -36}
+
+---
+
+### `lipschitz-min`
+
+```clojure
+(lipschitz-min f a b L & {:keys [tol], :or {tol 1.0E-6}})
+```
+
+Global minimum of f on [a, b] to within tol, given a Lipschitz constant L
+   (|f(x) - f(y)| <= L |x - y|).
+   Pattern: TREE/GRAPH EXPLORER (search + best-first). An interval is a node;
+   its lower bound is f(midpoint) - L * half-width. An interval whose bound
+   cannot beat the best point found is not divided.
+
+   (R -> R) -> R -> R -> R -> {:keys [tol]} -> {:x R, :value R, :evals Int}
+
+   Example:
+     (lipschitz-min #(Math/sin %) 0.0 10.0 1.0)
+     ;=> {:x ~4.712389 :value ~-1.0 :evals 6643}
+
+---
+
+### `potentially-optimal-first`
+
+```clojure
+(potentially-optimal-first eps)
+```
+
+DIRECT's selection rule as a strategy for orhof.search: take every
+   potentially optimal rectangle of the current set, then select again.
+   Catalog: O37. Pattern: TREE/GRAPH EXPLORER (a strategy is one function).
+
+   R -> Strategy
+
+   Rectangles are maps with :size (centre-to-corner distance) and :y (the
+   value at the centre).
+
+   Example:
+     (search (potentially-optimal-first 1e-4) rf init expand root)
+
+---
+
+
+## `orhof.search.learn`
+
+Tree learners on orhof.search: decision trees, random forests, regression
+   trees and gradient boosting.
+   Pattern: TREE/GRAPH EXPLORER + MODEL BUILDER — growing a tree is an unfold
+   (split the rows) whose fold is the constructor, so hylo returns the tree
+   itself. A forest is `repeatedly` over that; boosting is `iterate` over it.
+
+   Rows are maps. Trees are plain data:
+     classification  {:attribute a, :branches {value subtree}, :default label} | {:label label}
+     regression      {:feature f, :threshold t, :left subtree, :right subtree}  | {:value mean}
+
+### `classify`
+
+```clojure
+(classify tree row)
+```
+
+The label a decision tree gives a row. A value the tree has not seen falls
+   back to the majority label at that node.
+
+   Tree -> Row -> Label
+
+   Example:
+     (classify tree {:sky :fog :wind :calm}) ;=> :no     ; tree as under decision-tree
+
+---
+
+### `classify-forest`
+
+```clojure
+(classify-forest forest row)
+```
+
+The label most trees of a forest give a row.
+
+   [Tree] -> Row -> Label
+
+   Example:
+     (classify-forest forest row)
+
+---
+
+### `decision-tree`
+
+```clojure
+(decision-tree rows attributes target & {:keys [choose], :or {choose identity}})
+```
+
+Grows a classification tree by ID3: split on the attribute with the
+   highest information gain until the rows agree or nothing is left to gain.
+   Pattern: TREE/GRAPH EXPLORER (hylo; the fold is the constructor).
+
+   [Row] -> [Attribute] -> Attribute -> {:keys [choose]} -> Tree
+
+   rows: maps; attributes: the keys to split on; target: the key of the label
+   Options:
+     :choose  attributes -> the attributes to consider at this split
+              (default: all of them; random-forest draws a random few)
+
+   Example:
+     (def tree (decision-tree [{:sky :sun :wind :calm :play :yes}
+                               {:sky :sun :wind :gale :play :no}
+                               {:sky :rain :wind :calm :play :no}
+                               {:sky :rain :wind :gale :play :no}]
+                              [:sky :wind] :play))
+     (classify tree {:sky :sun :wind :calm}) ;=> :yes
+
+---
+
+### `gradient-boosting`
+
+```clojure
+(gradient-boosting rows features target & {:keys [n-rounds lr max-depth], :or {n-rounds 50, lr 0.1, max-depth 2}})
+```
+
+Gradient boosting for squared error: each round fits a small regression
+   tree to the residuals of the model so far and adds a fraction of it.
+   Pattern: ITERATE (the round) + TREE/GRAPH EXPLORER (regression-tree).
+
+   [Row] -> [Feature] -> Feature -> {:keys [n-rounds lr max-depth]}
+   -> {:base R, :lr R, :trees [Tree]}
+
+   Options:
+     :n-rounds   number of trees (default 50)
+     :lr         learning rate, the fraction of each tree that is added (default 0.1)
+     :max-depth  depth of each tree (default 2)
+
+   Example:
+     (def model (gradient-boosting rows [:x] :y :n-rounds 200))
+     (predict-boosted model {:x 1.5})
+
+---
+
+### `predict`
+
+```clojure
+(predict tree row)
+```
+
+The value a regression tree gives a row.
+
+   Tree -> Row -> R
+
+   Example:
+     (predict tree {:x 1.5}) ;=> 5.0     ; tree as under regression-tree
+
+---
+
+### `predict-boosted`
+
+```clojure
+(predict-boosted model row)
+```
+
+The value a boosted model gives a row: the base value plus the learning
+   rate times the sum of its trees.
+
+   {:base R, :lr R, :trees [Tree]} -> Row -> R
+
+   Example:
+     (predict-boosted model {:x 1.5})     ; model as under gradient-boosting
+
+---
+
+### `random-forest`
+
+```clojure
+(random-forest rows attributes target & {:keys [n-trees n-features], :or {n-trees 25}})
+```
+
+Grows decision trees on bootstrap samples of the rows, each split choosing
+   among a few randomly drawn attributes.
+   Pattern: GENERATE (repeatedly) + TREE/GRAPH EXPLORER (decision-tree).
+
+   [Row] -> [Attribute] -> Attribute -> {:keys [n-trees n-features]} -> [Tree]
+
+   Options:
+     :n-trees     number of trees (default 25)
+     :n-features  attributes drawn at each split (default: floor of the
+                  square root of the number of attributes, at least 1)
+
+   Example:
+     (def forest (random-forest rows [:a :b :c :d] :label :n-trees 40))
+     (classify-forest forest {:a 1 :b 0 :c 2 :d 1}) ;=> :yes
+
+---
+
+### `regression-tree`
+
+```clojure
+(regression-tree rows features target & {:keys [max-depth min-rows], :or {max-depth 3, min-rows 1}})
+```
+
+Grows a regression tree (CART): split on the feature and threshold that
+   most reduce the squared error, down to a maximum depth.
+   Pattern: TREE/GRAPH EXPLORER (hylo; the fold is the constructor).
+
+   [Row] -> [Feature] -> Feature -> {:keys [max-depth min-rows]} -> Tree
+
+   Options:
+     :max-depth  deepest split (default 3)
+     :min-rows   fewest rows on either side of a split (default 1)
+
+   Example:
+     (def tree (regression-tree [{:x 1.0 :y 5.0} {:x 2.0 :y 5.0} {:x 3.0 :y 9.0}] [:x] :y))
+     (predict tree {:x 2.9}) ;=> 9.0
+
+---
+
+
+## `orhof.search.diff`
+
+Backpropagation (reverse-mode automatic differentiation) on orhof.search.
+   Pattern: TREE/GRAPH EXPLORER — the forward pass is a memoised fold of the
+   expression graph; the backward pass is a reduce over its nodes in an order
+   that visits every node after all the nodes that use it.
+
+   An expression is a number, a keyword (a variable) or a vector
+   [op & operands]. A sub-expression that is the same object in several
+   places is one node of the graph: bind it once with `let`, and its value
+   and its adjoint are computed once however often it is used.
+
+### `backprop`
+
+```clojure
+(backprop expression env & {:keys [operations]})
+```
+
+The value of an expression and its derivative with respect to every
+   variable, at the point `env`: one forward pass and one backward pass,
+   whatever the number of variables.
+   Catalog: O5. Pattern: TREE/GRAPH EXPLORER (hylo-eager forward; explore +
+   best-first + reduce backward).
+
+   Expression -> {Variable R} -> {:keys [operations]} -> {:value R, :gradient {Variable R}}
+
+   The graph may be as deep as memory allows: neither pass recurses, and
+   nodes are told apart by identity, so the cost is linear in the number of
+   nodes however large the expressions under them.
+
+   Example:
+     ;; d/dx and d/dy of x*y + sin x at (2, 3)
+     (backprop [:+ [:* :x :y] [:sin :x]] {:x 2.0 :y 3.0})
+     ;=> {:value 6.909297 :gradient {:x 2.583853 :y 2.0}}
+
+     ;; a shared sub-expression is one node: (x*x) * (x*x)
+     (let [square [:* :x :x]]
+       (backprop [:* square square] {:x 1.5}))
+     ;=> {:value 5.0625 :gradient {:x 13.5}}
+
+---
+
+### `operations`
+
+The operations backprop knows: {op {:value f, :partials g}}.
+     :value     applies the operation to the values of the operands
+     :partials  (fn [operand-values result]) -> the derivative of the result
+                with respect to each operand
+   Pass an extended map as :operations to add your own.
+
+   Example:
+     (assoc operations :relu {:value    #(max 0.0 %)
+                              :partials (fn [[x] _] [(if (pos? x) 1.0 0.0)])})
 
 ---
 
