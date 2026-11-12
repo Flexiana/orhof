@@ -109,7 +109,7 @@ fixture, so the suite is deterministic.
 
 Push a tag `vX.Y.Z`. The Release workflow runs the tests and deploys `X.Y.Z` to Clojars
 as `io.github.flexiana/orhof`. It needs the repository secrets `CLOJARS_USERNAME` and
-`CLOJARS_PASSWORD` (a Clojars deploy token). Locally: `clojure -T:build jar`.
+`CLOJARS_PASSWORD` (a Clojars deploy token). Locally: `clojure -T:build jar` or `install`.
 
 ## License
 

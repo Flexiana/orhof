@@ -35,4 +35,5 @@ jobs:
           CLOJARS_PASSWORD: ${{ secrets.CLOJARS_PASSWORD }}
         run: |
           export ORHOF_VERSION="${TAG#v}"
-          clojure -T:build deploy
+          clojure -T:build jar
+          clojure -X:deploy $(clojure -T:build paths)

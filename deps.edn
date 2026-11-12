@@ -8,7 +8,11 @@
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}
   :run {:main-opts ["-m" "orhof.examples"]}
-  ;; clojure -T:build jar | install | deploy   (version from ORHOF_VERSION)
-  :build {:deps {io.github.clojure/tools.build {:git/tag "v0.10.14" :git/sha "9d08b2a"}
-                 slipset/deps-deploy {:mvn/version "0.2.2"}}
-          :ns-default build}}}
+  ;; clojure -T:build jar | install   (version from ORHOF_VERSION)
+  :build {:deps {io.github.clojure/tools.build {:git/tag "v0.10.14" :git/sha "9d08b2a"}}
+          :ns-default build}
+  ;; clojure -X:deploy :artifact '"target/orhof-X.jar"' :pom-file '"..."'
+  ;; kept apart from :build: deps-deploy's Maven libraries clash with tools.build's
+  :deploy {:replace-deps {slipset/deps-deploy {:mvn/version "0.2.2"}}
+           :exec-fn deps-deploy.deps-deploy/deploy
+           :exec-args {:installer :remote}}}}

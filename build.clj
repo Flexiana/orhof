@@ -1,20 +1,19 @@
 (ns build
-  "Builds the orhof jar and deploys it to Clojars.
+  "Builds the orhof jar.
 
-     clojure -T:build jar       target/orhof-<version>.jar
+     clojure -T:build jar       target/orhof-<version>.jar and its pom.xml
      clojure -T:build install   into the local Maven repository
-     clojure -T:build deploy    to Clojars; needs CLOJARS_USERNAME and
-                                CLOJARS_PASSWORD (a deploy token)
 
    The version comes from the ORHOF_VERSION environment variable. The release
-   workflow sets it from the git tag: tag v1.0.0 releases 1.0.0."
-  (:require [clojure.tools.build.api :as b]
-            [deps-deploy.deps-deploy :as dd]))
+   workflow sets it from the git tag (v1.0.0 builds 1.0.0) and then deploys
+   with the :deploy alias, which `clojure -T:build paths` prints arguments for."
+  (:require [clojure.tools.build.api :as b]))
 
 (def lib 'io.github.flexiana/orhof)
 (def version (or (System/getenv "ORHOF_VERSION") "1.0.0-SNAPSHOT"))
 (def class-dir "target/classes")
 (def jar-file (format "target/%s-%s.jar" (name lib) version))
+(def basis (delay (b/create-basis {:project "deps.edn"})))
 
 (defn clean [_]
   (b/delete {:path "target"}))
@@ -24,7 +23,7 @@
   (b/write-pom {:class-dir class-dir
                 :lib       lib
                 :version   version
-                :basis     (b/create-basis {:project "deps.edn"})
+                :basis     @basis
                 :src-dirs  ["src"]
                 :scm       {:url                 "https://github.com/Flexiana/orhof"
                             :connection          "scm:git:https://github.com/Flexiana/orhof.git"
@@ -42,12 +41,9 @@
 
 (defn install [_]
   (jar nil)
-  (dd/deploy {:installer :local
-              :artifact  (b/resolve-path jar-file)
-              :pom-file  (b/pom-path {:lib lib :class-dir class-dir})}))
+  (b/install {:basis @basis :lib lib :version version :jar-file jar-file :class-dir class-dir}))
 
-(defn deploy [_]
-  (jar nil)
-  (dd/deploy {:installer :remote
-              :artifact  (b/resolve-path jar-file)
-              :pom-file  (b/pom-path {:lib lib :class-dir class-dir})}))
+(defn paths
+  "Prints the :artifact and :pom-file arguments for clojure -X:deploy."
+  [_]
+  (println (pr-str :artifact jar-file :pom-file (b/pom-path {:lib lib :class-dir class-dir}))))

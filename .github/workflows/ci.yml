@@ -21,3 +21,5 @@ jobs:
         run: clojure -X:test
       - name: Build the jar
         run: clojure -T:build jar
+      - name: Check the deploy step by installing into the local Maven repository
+        run: clojure -X:deploy :installer :local $(clojure -T:build paths)
